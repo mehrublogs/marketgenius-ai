@@ -11,7 +11,8 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { type, ...inputs } = body
+    const { type, inputs: nestedInputs, ...rest } = body
+    const inputs = nestedInputs || rest
 
     if (!type) {
       return NextResponse.json({ error: 'Tool type is required' }, { status: 400 })
