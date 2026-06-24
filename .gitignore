@@ -45,3 +45,5 @@ prisma/dev.db-wal
 
 # misc
 test-download.bin
+
+.vercel

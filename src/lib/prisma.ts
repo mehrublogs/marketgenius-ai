@@ -1,5 +1,3 @@
-import Database from 'better-sqlite3'
-import path from 'path'
 import crypto from 'crypto'
 
 function cuid() {
@@ -10,171 +8,154 @@ function nowISO() {
   return new Date().toISOString()
 }
 
-// Initialize SQLite database
-const dbPath = path.join(process.cwd(), 'prisma', 'dev.db')
-const _db = new Database(dbPath)
+// In-memory database tables
+const tables: Record<string, Map<string, Record<string, unknown>>> = {
+  User: new Map(),
+  GeneratedContent: new Map(),
+  ShortLink: new Map(),
+  ClickEvent: new Map(),
+  Plan: new Map(),
+  Subscription: new Map(),
+  UsageLog: new Map(),
+}
 
-// Enable WAL mode for better concurrent access
-_db.pragma('journal_mode = WAL')
-_db.pragma('foreign_keys = ON')
+// Seed default data on first load
+let seeded = false
+function seedIfNeeded() {
+  if (seeded) return
+  seeded = true
 
-// Create tables
-_db.exec(`
-  CREATE TABLE IF NOT EXISTS User (
-    id TEXT PRIMARY KEY,
-    email TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    name TEXT NOT NULL,
-    role TEXT DEFAULT 'user',
-    isActive INTEGER DEFAULT 1,
-    createdAt TEXT DEFAULT (datetime('now')),
-    updatedAt TEXT DEFAULT (datetime('now'))
-  );
-  CREATE TABLE IF NOT EXISTS GeneratedContent (
-    id TEXT PRIMARY KEY,
-    userId TEXT NOT NULL,
-    tool TEXT NOT NULL,
-    input TEXT NOT NULL,
-    output TEXT NOT NULL,
-    createdAt TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (userId) REFERENCES User(id)
-  );
-  CREATE TABLE IF NOT EXISTS ShortLink (
-    id TEXT PRIMARY KEY,
-    userId TEXT NOT NULL,
-    slug TEXT UNIQUE NOT NULL,
-    url TEXT NOT NULL,
-    title TEXT DEFAULT '',
-    clicks INTEGER DEFAULT 0,
-    createdAt TEXT DEFAULT (datetime('now')),
-    updatedAt TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (userId) REFERENCES User(id)
-  );
-  CREATE TABLE IF NOT EXISTS ClickEvent (
-    id TEXT PRIMARY KEY,
-    linkId TEXT NOT NULL,
-    timestamp TEXT DEFAULT (datetime('now')),
-    referer TEXT DEFAULT '',
-    userAgent TEXT DEFAULT '',
-    FOREIGN KEY (linkId) REFERENCES ShortLink(id)
-  );
-  CREATE TABLE IF NOT EXISTS Plan (
-    id TEXT PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL,
-    description TEXT NOT NULL,
-    price REAL NOT NULL,
-    contentLimit INTEGER DEFAULT 50,
-    urlLimit INTEGER DEFAULT 10,
-    features TEXT DEFAULT '[]',
-    isActive INTEGER DEFAULT 1,
-    createdAt TEXT DEFAULT (datetime('now')),
-    updatedAt TEXT DEFAULT (datetime('now'))
-  );
-  CREATE TABLE IF NOT EXISTS Subscription (
-    id TEXT PRIMARY KEY,
-    userId TEXT UNIQUE NOT NULL,
-    planId TEXT NOT NULL,
-    status TEXT DEFAULT 'active',
-    startedAt TEXT DEFAULT (datetime('now')),
-    expiresAt TEXT,
-    createdAt TEXT DEFAULT (datetime('now')),
-    updatedAt TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (userId) REFERENCES User(id),
-    FOREIGN KEY (planId) REFERENCES Plan(id)
-  );
-  CREATE TABLE IF NOT EXISTS UsageLog (
-    id TEXT PRIMARY KEY,
-    userId TEXT NOT NULL,
-    action TEXT NOT NULL,
-    tool TEXT DEFAULT '',
-    metadata TEXT DEFAULT '{}',
-    createdAt TEXT DEFAULT (datetime('now'))
-  );
-`)
+  // Default plans
+  const plans = [
+    { id: 'plan_free', name: 'free', description: 'Free plan with basic features', price: 0, contentLimit: 10, urlLimit: 5, features: '["5 AI Tools","Basic Analytics","URL Shortener (5 links)"]', isActive: 1 },
+    { id: 'plan_pro', name: 'pro', description: 'Professional plan with advanced features', price: 29.99, contentLimit: 100, urlLimit: 50, features: '["All AI Tools","Advanced Analytics","Priority Support","URL Shortener (50 links)","Custom Templates"]', isActive: 1 },
+    { id: 'plan_enterprise', name: 'enterprise', description: 'Enterprise plan with unlimited features', price: 99.99, contentLimit: -1, urlLimit: -1, features: '["Unlimited AI Tools","Enterprise Analytics","24/7 Support","Unlimited URLs","Custom Integrations","Team Management","API Access"]', isActive: 1 },
+  ]
+  for (const plan of plans) {
+    const now = nowISO()
+    tables.Plan.set(plan.id, { ...plan, createdAt: now, updatedAt: now })
+  }
 
-// Helper to build WHERE clauses
+  // Default admin user (password: admin12345)
+  const adminId = 'user_admin'
+  tables.User.set(adminId, {
+    id: adminId,
+    email: 'admin@example.com',
+    password: '$2b$12$dyOoQcah8xH/Of9lci2ceuy6Kt3OTqoZZ4YTpp3D9dAC8rNdKfNJi', // bcrypt hash of admin12345
+    name: 'Admin User',
+    role: 'admin',
+    isActive: 1,
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+  })
+
+  // Default demo user (password: user12345)
+  const userId = 'user_demo'
+  tables.User.set(userId, {
+    id: userId,
+    email: 'user@example.com',
+    password: '$2b$12$YmQsqeXfhHQPENzuekowieOJWVNKTuq6kqpAiNGlC9NXunWGNuT9C', // bcrypt hash of user12345
+    name: 'Demo User',
+    role: 'user',
+    isActive: 1,
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+  })
+
+  // Default subscription for demo user
+  tables.Subscription.set('sub_demo', {
+    id: 'sub_demo',
+    userId: userId,
+    planId: 'plan_free',
+    status: 'active',
+    startedAt: nowISO(),
+    expiresAt: null,
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+  })
+}
+
+seedIfNeeded()
+
 function buildWhere(conditions: Record<string, unknown>): { clause: string; values: unknown[] } {
   const keys = Object.keys(conditions)
   if (keys.length === 0) return { clause: '1=1', values: [] }
-  const clauses: string[] = []
-  const values: unknown[] = []
-  for (const key of keys) {
-    const val = conditions[key]
+  return {
+    clause: keys.map(k => `${k} = ?`).join(' AND '),
+    values: Object.values(conditions),
+  }
+}
+
+function matchesWhere(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
+  for (const [key, val] of Object.entries(where)) {
     if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
-      // Handle Prisma-like operators
-      if ('in' in val) {
-        clauses.push(`${key} IN (${val.in.map(() => '?').join(',')})`)
-        values.push(...val.in)
-      } else if ('contains' in val) {
-        clauses.push(`${key} LIKE ?`)
-        values.push(`%${val.contains}%`)
-      } else if ('gte' in val) {
-        clauses.push(`${key} >= ?`)
-        values.push(val.gte)
-      } else if ('lte' in val) {
-        clauses.push(`${key} <= ?`)
-        values.push(val.lte)
-      } else if ('gt' in val) {
-        clauses.push(`${key} > ?`)
-        values.push(val.gt)
-      } else if ('lt' in val) {
-        clauses.push(`${key} < ?`)
-        values.push(val.lt)
-      }
+      if ('in' in val && !val.in.includes(row[key])) return false
+      if ('contains' in val && !(row[key] as string || '').includes(val.contains)) return false
+      if ('gte' in val && (row[key] as number) < val.gte) return false
+      if ('lte' in val && (row[key] as number) > val.lte) return false
+      if ('gt' in val && (row[key] as number) <= val.gt) return false
+      if ('lt' in val && (row[key] as number) >= val.lt) return false
     } else {
-      clauses.push(`${key} = ?`)
-      values.push(val)
+      if (row[key] !== val) return false
     }
   }
-  return { clause: clauses.join(' AND '), values }
+  return true
 }
 
-function buildOrderBy(orderBy: unknown): string {
-  if (!orderBy) return ''
-  if (typeof orderBy === 'object' && orderBy !== null && !Array.isArray(orderBy)) {
-    const entries = Object.entries(orderBy)
-    return entries.map(([k, v]) => `${k} ${v === 'desc' ? 'DESC' : 'ASC'}`).join(', ')
-  }
-  return ''
+function sortRows(rows: Record<string, unknown>[], orderBy: unknown): Record<string, unknown>[] {
+  if (!orderBy || typeof orderBy !== 'object' || Array.isArray(orderBy)) return rows
+  const entries = Object.entries(orderBy as Record<string, string>)
+  return [...rows].sort((a, b) => {
+    for (const [key, dir] of entries) {
+      const aVal = a[key] as string | number
+      const bVal = b[key] as string | number
+      if (aVal < bVal) return dir === 'asc' ? -1 : 1
+      if (aVal > bVal) return dir === 'asc' ? 1 : -1
+    }
+    return 0
+  })
 }
 
-// Create a Prisma-like query API
 function createModel(tableName: string) {
   return {
     findUnique({ where }: { where: Record<string, unknown> }) {
-      const { clause, values } = buildWhere(where)
-      return _db.prepare(`SELECT * FROM ${tableName} WHERE ${clause} LIMIT 1`).get(...values)
+      const table = tables[tableName]
+      if (!table) return undefined
+      for (const row of table.values()) {
+        if (matchesWhere(row, where)) return { ...row }
+      }
+      return undefined
     },
 
-    findFirst({ where, orderBy }: { where?: Record<string, unknown>; orderBy?: unknown } = {}) {
-      const { clause, values } = buildWhere(where || {})
-      const order = buildOrderBy(orderBy)
-      const sql = `SELECT * FROM ${tableName} WHERE ${clause}${order ? ' ORDER BY ' + order : ''} LIMIT 1`
-      return _db.prepare(sql).get(...values)
+    findFirst({ where = {}, orderBy }: { where?: Record<string, unknown>; orderBy?: unknown } = {}) {
+      const table = tables[tableName]
+      if (!table) return undefined
+      let rows = [...table.values()].filter(r => matchesWhere(r, where))
+      if (orderBy) rows = sortRows(rows, orderBy)
+      return rows[0] ? { ...rows[0] } : undefined
     },
 
-    findMany({ where, orderBy, take, select, include }: { where?: Record<string, unknown>; orderBy?: unknown; take?: number; select?: Record<string, boolean>; include?: Record<string, unknown> } = {}) {
-      const { clause, values } = buildWhere(where || {})
-      const order = buildOrderBy(orderBy)
-      let sql = `SELECT * FROM ${tableName} WHERE ${clause}${order ? ' ORDER BY ' + order : ''}`
-      if (take) sql += ` LIMIT ${take}`
-
-      let rows = _db.prepare(sql).all(...values) as Record<string, unknown>[]
+    findMany({ where = {}, orderBy, take, select, include }: { where?: Record<string, unknown>; orderBy?: unknown; take?: number; select?: Record<string, boolean>; include?: Record<string, unknown> } = {}) {
+      const table = tables[tableName]
+      if (!table) return []
+      let rows = [...table.values()].filter(r => matchesWhere(r, where))
+      if (orderBy) rows = sortRows(rows, orderBy)
+      if (take) rows = rows.slice(0, take)
 
       // Handle include (join related tables)
       if (include && typeof include === 'object') {
-        for (const [relName, relConfig] of Object.entries(include)) {
-          if (relName === 'user' && tableName === 'GeneratedContent') {
+        for (const [relName] of Object.entries(include)) {
+          if (relName === 'user' && (tableName === 'GeneratedContent' || tableName === 'ShortLink')) {
             for (const row of rows) {
-              row.user = _db.prepare('SELECT id, name, email FROM User WHERE id = ?').get(row.userId)
-            }
-          } else if (relName === 'user' && tableName === 'ShortLink') {
-            for (const row of rows) {
-              row.user = _db.prepare('SELECT id, name, email FROM User WHERE id = ?').get(row.userId)
+              row.user = tables.User.get(row.userId as string) || null
             }
           } else if (relName === 'link' && tableName === 'ClickEvent') {
             for (const row of rows) {
-              row.link = _db.prepare('SELECT slug, url FROM ShortLink WHERE id = ?').get(row.linkId)
+              row.link = tables.ShortLink.get(row.linkId as string) || null
+            }
+          } else if (relName === 'plan' && tableName === 'Subscription') {
+            for (const row of rows) {
+              row.plan = tables.Plan.get(row.planId as string) || null
             }
           }
         }
@@ -191,113 +172,123 @@ function createModel(tableName: string) {
         })
       }
 
-      return rows
+      return rows.map(r => ({ ...r }))
     },
 
-    count({ where }: { where?: Record<string, unknown> } = {}) {
-      const { clause, values } = buildWhere(where || {})
-      const result = _db.prepare(`SELECT COUNT(*) as count FROM ${tableName} WHERE ${clause}`).get(...values) as { count: number }
-      return result.count
+    count({ where = {} }: { where?: Record<string, unknown> } = {}) {
+      const table = tables[tableName]
+      if (!table) return 0
+      return [...table.values()].filter(r => matchesWhere(r, where)).length
     },
 
     create({ data }: { data: Record<string, unknown> }) {
+      const table = tables[tableName]
       const id = (data.id as string) || cuid()
       const now = nowISO()
-      const insertData = { id, createdAt: now, updatedAt: now, ...data }
-      const keys = Object.keys(insertData)
-      const placeholders = keys.map(() => '?').join(', ')
-      const values = Object.values(insertData).map(v => (typeof v === 'object' ? JSON.stringify(v) : v))
-      _db.prepare(`INSERT INTO ${tableName} (${keys.join(', ')}) VALUES (${placeholders})`).run(...values)
-      return _db.prepare(`SELECT * FROM ${tableName} WHERE id = ?`).get(id)
+      const record = { id, createdAt: now, updatedAt: now, ...data }
+      table.set(id, record)
+      return { ...record }
     },
 
     createMany({ data }: { data: Record<string, unknown>[] }) {
-      const insert = _db.transaction((items: Record<string, unknown>[]) => {
-        let count = 0
-        for (const item of items) {
-          const id = item.id || cuid()
-          const now = nowISO()
-          const insertData = { id, createdAt: now, ...item }
-          const keys = Object.keys(insertData)
-          const placeholders = keys.map(() => '?').join(', ')
-          const values = Object.values(insertData).map(v => (typeof v === 'object' ? JSON.stringify(v) : v))
-          _db.prepare(`INSERT OR IGNORE INTO ${tableName} (${keys.join(', ')}) VALUES (${placeholders})`).run(...values)
+      const table = tables[tableName]
+      let count = 0
+      for (const item of data) {
+        const id = (item.id as string) || cuid()
+        const now = nowISO()
+        const record = { id, createdAt: now, ...item }
+        if (!table.has(id)) {
+          table.set(id, record)
           count++
         }
-        return count
-      })
-      return { count: insert(data) }
+      }
+      return { count }
     },
 
     update({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) {
-      const { clause, values: whereValues } = buildWhere(where)
-      const now = nowISO()
-      const setClauses: string[] = []
-      const setValues: unknown[] = []
-      for (const [key, val] of Object.entries(data)) {
-        if (typeof val === 'object' && val !== null && !Array.isArray(val) && 'increment' in val) {
-          setClauses.push(`${key} = ${key} + ?`)
-          setValues.push(val.increment)
-        } else if (typeof val === 'object' && val !== null && !Array.isArray(val) && 'set' in val) {
-          setClauses.push(`${key} = ?`)
-          setValues.push(val.set)
-        } else {
-          setClauses.push(`${key} = ?`)
-          setValues.push(typeof val === 'object' ? JSON.stringify(val) : val)
+      const table = tables[tableName]
+      for (const row of table.values()) {
+        if (matchesWhere(row, where)) {
+          const now = nowISO()
+          for (const [key, val] of Object.entries(data)) {
+            if (typeof val === 'object' && val !== null && 'increment' in val) {
+              row[key] = (row[key] as number) + (val as { increment: number }).increment
+            } else if (typeof val === 'object' && val !== null && 'set' in val) {
+              row[key] = (val as { set: unknown }).set
+            } else {
+              row[key] = val
+            }
+          }
+          row.updatedAt = now
+          return { ...row }
         }
       }
-      setClauses.push('updatedAt = ?')
-      setValues.push(now)
-      _db.prepare(`UPDATE ${tableName} SET ${setClauses.join(', ')} WHERE ${clause}`).run(...setValues, ...whereValues)
-      return _db.prepare(`SELECT * FROM ${tableName} WHERE ${clause}`).get(...whereValues)
+      return undefined
     },
 
     upsert({ where, update, create }: { where: Record<string, unknown>; update: Record<string, unknown>; create: Record<string, unknown> }) {
-      const existing = _db.prepare(`SELECT * FROM ${tableName} WHERE ${Object.keys(where).map(k => `${k} = ?`).join(' AND ')}`).get(...Object.values(where))
+      const existing = this.findUnique({ where })
       if (existing) {
         return this.update({ where, data: update })
       }
       return this.create({ data: create })
     },
 
-    aggregate({ where, _sum }: { where?: Record<string, unknown>; _sum?: Record<string, boolean> }) {
-      const { clause, values } = buildWhere(where || {})
+    aggregate({ where = {}, _sum }: { where?: Record<string, unknown>; _sum?: Record<string, boolean> } = {}) {
+      const table = tables[tableName]
+      if (!table) return { _sum: {} }
+      const rows = [...table.values()].filter(r => matchesWhere(r, where))
       if (_sum) {
         const fields = Object.keys(_sum).filter(k => _sum[k])
         const sums: Record<string, number> = {}
         for (const field of fields) {
-          const result = _db.prepare(`SELECT COALESCE(SUM(${field}), 0) as total FROM ${tableName} WHERE ${clause}`).get(...values) as { total: number }
-          sums[field] = result.total
+          sums[field] = rows.reduce((acc, r) => acc + ((r[field] as number) || 0), 0)
         }
         return { _sum: sums }
       }
-      return {}
+      return { _sum: {} }
     },
 
-    groupBy({ by, where, _count, orderBy, take }: { by: string[]; where?: Record<string, unknown>; _count?: boolean | Record<string, boolean>; orderBy?: unknown; take?: number }) {
-      const { clause, values } = buildWhere(where || {})
+    groupBy({ by, where = {}, _count, orderBy, take }: { by: string[]; where?: Record<string, unknown>; _count?: boolean | Record<string, boolean>; orderBy?: unknown; take?: number }) {
+      const table = tables[tableName]
+      if (!table) return []
       const groupField = by[0]
-      const order = buildOrderBy(orderBy)
-      let sql = `SELECT ${groupField}, COUNT(*) as _count_val FROM ${tableName} WHERE ${clause} GROUP BY ${groupField}${order ? ' ORDER BY ' + order : ''}`
-      if (take) sql += ` LIMIT ${take}`
-      const rows = _db.prepare(sql).all(...values) as Record<string, unknown>[]
-      return rows.map(row => {
-        const result: Record<string, unknown> = { [groupField]: row[groupField] }
+      const rows = [...table.values()].filter(r => matchesWhere(r, where))
+      const groups = new Map<unknown, Record<string, unknown>[]>()
+
+      for (const row of rows) {
+        const key = row[groupField]
+        if (!groups.has(key)) groups.set(key, [])
+        groups.get(key)!.push(row)
+      }
+
+      let results = [...groups.entries()].map(([key, items]) => {
+        const result: Record<string, unknown> = { [groupField]: key }
         if (_count) {
-          result._count = { [groupField]: row._count_val }
+          result._count = { [groupField]: items.length }
         }
         return result
       })
+
+      if (orderBy) results = sortRows(results, orderBy) as Record<string, unknown>[]
+      if (take) results = results.slice(0, take)
+      return results
     },
 
     delete({ where }: { where: Record<string, unknown> }) {
-      const { clause, values } = buildWhere(where)
-      return _db.prepare(`DELETE FROM ${tableName} WHERE ${clause}`).run(...values)
+      const table = tables[tableName]
+      let count = 0
+      for (const [id, row] of table.entries()) {
+        if (matchesWhere(row, where)) {
+          table.delete(id)
+          count++
+        }
+      }
+      return { count }
     },
   }
 }
 
-// Export a Prisma-like client
 export const prisma = {
   user: createModel('User'),
   generatedContent: createModel('GeneratedContent'),
@@ -306,7 +297,5 @@ export const prisma = {
   plan: createModel('Plan'),
   subscription: createModel('Subscription'),
   usageLog: createModel('UsageLog'),
-  $disconnect() {
-    _db.close()
-  },
+  $disconnect() {},
 } as any

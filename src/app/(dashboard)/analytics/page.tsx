@@ -91,7 +91,7 @@ export default function AnalyticsPage() {
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={data.toolUsage} dataKey="count" nameKey="tool" cx="50%" cy="50%" outerRadius={80} label={({ tool }) => toolLabels[tool] || tool}>
+                  <Pie data={data.toolUsage} dataKey="count" nameKey="tool" cx="50%" cy="50%" outerRadius={80} label={({ name }) => toolLabels[name || ''] || name || ''}>
                     {data.toolUsage.map((_, index) => (
                       <Cell key={index} fill={COLORS[index % COLORS.length]} />
                     ))}
