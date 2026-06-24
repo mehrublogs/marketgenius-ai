@@ -1,0 +1,96 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  password      String
+  name          String
+  role          String   @default("user")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  generatedContent GeneratedContent[]
+  shortLinks        ShortLink[]
+  subscription      Subscription?
+}
+
+model GeneratedContent {
+  id        String   @id @default(cuid())
+  userId    String
+  tool      String
+  input     String
+  output    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model ShortLink {
+  id        String   @id @default(cuid())
+  userId    String
+  slug      String   @unique
+  url       String
+  title     String   @default("")
+  clicks    Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User         @relation(fields: [userId], references: [id])
+  clickEvents ClickEvent[]
+}
+
+model ClickEvent {
+  id        String   @id @default(cuid())
+  linkId    String
+  timestamp DateTime @default(now())
+  referer   String   @default("")
+  userAgent String   @default("")
+
+  link ShortLink @relation(fields: [linkId], references: [id])
+}
+
+model Plan {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String
+  price       Float
+  contentLimit Int     @default(50)
+  urlLimit    Int      @default(10)
+  features    String   @default("[]")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  planId      String
+  status      String   @default("active")
+  startedAt   DateTime @default(now())
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+  plan Plan @relation(fields: [planId], references: [id])
+}
+
+model UsageLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  tool      String   @default("")
+  metadata  String   @default("{}")
+  createdAt DateTime @default(now())
+}
