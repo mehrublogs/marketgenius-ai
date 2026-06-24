@@ -6,6 +6,9 @@ import LanguageProvider from '@/components/LanguageProvider'
 export const metadata: Metadata = {
   title: 'MarketGenius AI - All-in-One AI Marketing Platform',
   description: 'Generate content, analyze keywords, shorten URLs, and more with the power of AI.',
+  icons: {
+    icon: '/icon.svg',
+  },
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
