@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { useLanguage } from '@/components/LanguageProvider'
 import Navbar from '@/components/Navbar'
 import Footer from '@/components/Footer'
+import { saveLoginRecord } from '@/lib/history'
 
 export default function LoginPage() {
   const { t } = useLanguage()
@@ -30,12 +31,15 @@ export default function LoginPage() {
       const data = await res.json()
 
       if (!res.ok) {
+        saveLoginRecord({ email, name: '', status: 'failed' })
         setError(data.error || t('general.error'))
         return
       }
 
+      saveLoginRecord({ email, name: data.user?.name || '', status: 'success' })
       router.push('/dashboard')
     } catch {
+      saveLoginRecord({ email, name: '', status: 'failed' })
       setError(t('general.error'))
     } finally {
       setLoading(false)

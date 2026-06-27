@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import ToolForm from '@/components/ToolForm'
 import OutputPanel from '@/components/OutputPanel'
 import { useLanguage } from '@/components/LanguageProvider'
+import { saveChatMessage } from '@/lib/history'
 
 interface SectionImage {
   heading: string
@@ -63,7 +64,9 @@ export default function ArticleWriterPage() {
         const err = await res.json()
         throw new Error(err.error || 'Failed to generate')
       }
-      setOutput(await res.json())
+      const result = await res.json()
+      setOutput(result)
+      saveChatMessage({ tool: 'article-writer', input: data, output: result })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong')
     } finally {

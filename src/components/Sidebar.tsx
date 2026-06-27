@@ -30,6 +30,7 @@ export default function Sidebar({ user }: SidebarProps) {
   const utilityLinks = [
     { href: '/url-shortener', label: t('sidebar.urlShortener'), icon: '🔗' },
     { href: '/analytics', label: t('sidebar.analytics'), icon: '📈' },
+    { href: '/history', label: t('nav.history') || 'History', icon: '📋' },
     { href: '/settings', label: t('sidebar.settings'), icon: '⚙️' },
   ]
 

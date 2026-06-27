@@ -16,6 +16,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'nav.logout': 'Logout',
     'nav.profile': 'Profile',
     'nav.admin': 'Admin',
+    'nav.history': 'History',
 
     // Dashboard sidebar
     'sidebar.dashboard': 'Dashboard',
@@ -299,6 +300,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'nav.logout': 'تسجيل الخروج',
     'nav.profile': 'الملف الشخصي',
     'nav.admin': 'الإدارة',
+    'nav.history': 'السجل',
 
     'sidebar.dashboard': 'لوحة التحكم',
     'sidebar.tools': 'أدوات الذكاء الاصطناعي',
