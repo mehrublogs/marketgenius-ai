@@ -120,18 +120,124 @@ async function callAI(prompt: string, systemPrompt: string): Promise<string> {
 
 // --- Tool-specific AI generation ---
 
+function getUnsplashImages(topic: string, sections: string[]): { featured: string; sectionImages: { heading: string; url: string; alt: string; aiPrompt: string }[] } {
+  const slug = topic.toLowerCase().replace(/[^a-z0-9]+/g, ',').split(',').filter(Boolean).slice(0, 3).join(',')
+  const featured = `https://source.unsplash.com/1200x630/?${encodeURIComponent(slug)}`
+  const sectionImages = sections.slice(0, 4).map((heading, i) => {
+    const keywords = heading.toLowerCase().replace(/[^a-z0-9]+/g, ',').split(',').filter(Boolean).slice(0, 2).join(',')
+    return {
+      heading,
+      url: `https://source.unsplash.com/800x450/?${encodeURIComponent(keywords || slug)}`,
+      alt: `${heading} - ${topic}`,
+      aiPrompt: `Professional high-quality photograph for a blog post about "${heading}". Modern, clean composition with vibrant colors. Suitable for a ${topic} article. 8K resolution, professional photography, natural lighting.`,
+    }
+  })
+  return { featured, sectionImages }
+}
+
 async function generateArticle(inputs: {
   topic: string; language: string; tone: string; targetAudience: string; wordCount: string
 }) {
-  const system = 'You are an expert content writer. Return your response as valid JSON with these fields: title (string), outline (array of strings), body (string - full article in markdown), metaDescription (string, max 160 chars). Return ONLY the JSON, no markdown fences.'
-  const prompt = `Write a ${inputs.wordCount}-word article about "${inputs.topic}" in ${inputs.language} language. Tone: ${inputs.tone}. Target audience: ${inputs.targetAudience}. Make it SEO-optimized and engaging.`
+  const wordCount = Math.max(parseInt(inputs.wordCount) || 2000, 2000)
+
+  const system = `You are an expert SEO content writer creating a ${wordCount}+ word article. Return your response as valid JSON with these fields:
+- title (string): SEO-optimized article title under 60 chars, include primary keyword
+- metaDescription (string): Meta description, 150-160 chars, compelling, include primary keyword
+- permalink (string): URL-friendly slug (lowercase, hyphens, no special chars), include primary keyword
+- focusKeywords (array of 5 strings): Primary, secondary, and long-tail SEO keywords
+- tags (array of 8 strings): Relevant content tags
+- outline (array of strings): Detailed article outline with 8-10 H2/H3 headings
+- body (string): FULL article in markdown, MINIMUM ${wordCount} words, with H2/H3 headings, bullet points, numbered lists, bold text, real examples, statistics, and actionable tips
+- faqs (array of 8 objects with "question" and "answer" strings): 8 frequently asked questions with detailed answers
+- featuredImagePrompt (string): Detailed AI image prompt for hero image
+- sectionImagePrompts (array of 4 strings): AI image prompts for in-article images
+Return ONLY the JSON, no markdown fences.`
+
+  const prompt = `Write a COMPREHENSIVE ${wordCount}+ word article about "${inputs.topic}" in ${inputs.language} language.
+Tone: ${inputs.tone}.
+Target audience: ${inputs.targetAudience}.
+
+SEO REQUIREMENTS (100% optimized):
+- Primary keyword in title, first paragraph, and 2-3 times throughout
+- Meta description 150-160 chars with primary keyword
+- URL-friendly permalink with primary keyword
+- 5 focus keywords (primary + secondary + long-tail)
+- 8+ relevant tags
+- 8-10 H2/H3 headings with keywords
+- FAQ schema with 8 questions
+
+CONTENT REQUIREMENTS (${wordCount}+ words):
+- Detailed introduction with hook (150-200 words)
+- 6-8 main sections with H2 headings (each 200-300 words)
+- Real examples, case studies, statistics
+- Bullet points and numbered lists
+- Bold key terms and phrases
+- Actionable tips and step-by-step guides
+- Expert insights and industry data
+- Conclusion with CTA
+
+IMAGE PROMPTS:
+- 1 detailed featuredImagePrompt for hero image
+- 4 sectionImagePrompts for article images
+
+Make the article comprehensive, authoritative, and highly valuable. DO NOT use placeholder text.`
 
   const raw = await callAI(prompt, system)
   try {
     const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
-    return JSON.parse(cleaned)
+    const parsed = JSON.parse(cleaned)
+    const images = getUnsplashImages(inputs.topic, parsed.outline || [])
+    return {
+      title: parsed.title || `The Ultimate Guide to ${inputs.topic} in ${new Date().getFullYear()}`,
+      metaDescription: parsed.metaDescription || `Discover everything about ${inputs.topic}. Learn proven strategies, expert tips, and best practices in this ${wordCount}+ word comprehensive guide.`,
+      permalink: parsed.permalink || inputs.topic.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+      focusKeywords: parsed.focusKeywords || [inputs.topic, `${inputs.topic} guide`, `${inputs.topic} tips`, `${inputs.topic} strategies`, `best ${inputs.topic}`],
+      tags: parsed.tags || [inputs.topic, 'marketing', 'digital', 'strategy', 'tips', 'guide', 'tutorial', 'best practices'],
+      outline: parsed.outline || [`Introduction to ${inputs.topic}`, `Why ${inputs.topic} Matters`, `Key Benefits`, `How to Get Started`, `Advanced Strategies`, `Common Mistakes to Avoid`, `Tools and Resources`, `Conclusion`],
+      body: parsed.body || raw,
+      faqs: parsed.faqs || [],
+      featuredImage: {
+        url: images.featured,
+        alt: `${inputs.topic} featured image`,
+        aiPrompt: parsed.featuredImagePrompt || `Professional hero image for article about ${inputs.topic}. High quality, modern design, vibrant colors, 8K resolution.`,
+      },
+      sectionImages: images.sectionImages.map((img, i) => ({
+        ...img,
+        aiPrompt: parsed.sectionImagePrompts?.[i] || img.aiPrompt,
+      })),
+    }
   } catch {
-    return { title: `Guide to ${inputs.topic}`, outline: ['Introduction', 'Key Benefits', 'How to Get Started', 'Conclusion'], body: raw, metaDescription: `Learn about ${inputs.topic} with this comprehensive guide.` }
+    const images = getUnsplashImages(inputs.topic, [
+      `Introduction to ${inputs.topic}`,
+      `Why ${inputs.topic} Matters`,
+      `Key Benefits of ${inputs.topic}`,
+      `How to Get Started with ${inputs.topic}`,
+    ])
+    return {
+      title: `The Complete Guide to ${inputs.topic} in ${new Date().getFullYear()}`,
+      metaDescription: `Discover everything about ${inputs.topic}. Learn strategies, tips, and best practices in this comprehensive guide.`,
+      permalink: inputs.topic.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+      focusKeywords: [inputs.topic, `${inputs.topic} guide`, `${inputs.topic} tips`, `${inputs.topic} strategies`],
+      tags: [inputs.topic, 'marketing', 'digital', 'strategy', 'tips', 'guide'],
+      outline: [`Introduction to ${inputs.topic}`, `Why ${inputs.topic} Matters`, `Key Benefits`, `How to Get Started`, `Advanced Strategies`, `Common Mistakes to Avoid`, `Conclusion`],
+      body: `# ${inputs.topic}\n\n${inputs.topic} has become essential for modern businesses. This guide covers everything you need to know.\n\n## Why ${inputs.topic} Matters\n\nCompanies that master ${inputs.topic} see significant improvements.\n\n## Key Benefits\n\n1. Increased efficiency\n2. Better targeting\n3. Higher engagement\n4. Measurable results\n\n## Getting Started\n\nStart by defining your goals and understanding your audience.\n\n## Advanced Strategies\n\nOnce you have mastered the basics, explore A/B testing and automation.\n\n## Common Mistakes to Avoid\n\n1. Not setting clear goals\n2. Ignoring analytics\n3. Being inconsistent`,
+      faqs: [
+        { question: `What is ${inputs.topic}?`, answer: `${inputs.topic} is a strategy used to improve business outcomes and drive growth.` },
+        { question: `Why is ${inputs.topic} important?`, answer: `It helps businesses reach their target audience more effectively and achieve better results.` },
+        { question: `How do I get started with ${inputs.topic}?`, answer: `Start by defining your goals, understanding your audience, and creating a strategic plan.` },
+        { question: `What are the best practices for ${inputs.topic}?`, answer: `Focus on consistency, data-driven decisions, and continuous improvement.` },
+        { question: `How long does it take to see results?`, answer: `Results vary, but typically you can expect to see initial improvements within 2-3 months.` },
+      ],
+      featuredImage: {
+        url: images.featured,
+        alt: `${inputs.topic} - Featured Image`,
+        aiPrompt: `Professional hero image for article about ${inputs.topic}. High quality, modern design, vibrant colors, professional photography, 8K resolution, natural lighting, clean composition.`,
+      },
+      sectionImages: images.sectionImages.map((img, i) => ({
+        ...img,
+        aiPrompt: img.aiPrompt,
+      })),
+    }
   }
 }
 
@@ -342,11 +448,36 @@ function demoFallback(type: string, inputs: Record<string, unknown>) {
   switch (type) {
     case 'article-writer': {
       const topic = inputs.topic as string
+      const topicSlug = topic.toLowerCase().replace(/[^a-z0-9]+/g, ',').split(',').filter(Boolean).slice(0, 3).join(',')
+      const sections = [`Introduction to ${topic}`, `Why ${topic} Matters`, `Key Benefits of ${topic}`, `How to Get Started with ${topic}`]
       return {
-        title: `The Complete Guide to ${topic}`,
-        outline: [`Introduction to ${topic}`, `Why ${topic} Matters in ${new Date().getFullYear()}`, `Key Benefits`, `How to Get Started`, `Advanced Strategies`, `Conclusion`],
-        body: `# ${topic}\n\n${topic} has become essential for modern businesses. This guide covers everything you need to know.\n\n## Why ${topic} Matters\n\nCompanies that master ${topic} see significant improvements.\n\n## Key Benefits\n\n1. Increased efficiency\n2. Better targeting\n3. Higher engagement\n4. Measurable results\n\n## Getting Started\n\nStart by defining your goals and understanding your audience.\n\n## Advanced Strategies\n\nOnce you've mastered the basics, explore A/B testing and automation.`,
-        metaDescription: `Complete guide to ${topic}. Learn strategies, tips, and best practices.`,
+        title: `The Complete Guide to ${topic} in ${new Date().getFullYear()}`,
+        metaDescription: `Discover everything about ${topic}. Learn strategies, tips, and best practices in this comprehensive guide.`,
+        permalink: topic.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+        focusKeywords: [topic, `${topic} guide`, `${topic} tips`, `${topic} strategies`, `best ${topic}`],
+        tags: [topic, 'marketing', 'digital', 'strategy', 'tips', 'guide', 'tutorial', 'best practices'],
+        outline: sections.concat([`Advanced ${topic} Strategies`, `Common ${topic} Mistakes to Avoid`, `${topic} Tools and Resources`, `${topic} Case Studies`, `Future of ${topic}`, `Conclusion`]),
+        body: `# The Complete Guide to ${topic} in ${new Date().getFullYear()}\n\nIn today's fast-paced digital world, ${topic} has emerged as one of the most critical strategies for businesses looking to thrive and stay competitive. Whether you are a seasoned professional or just starting out, understanding ${topic} can make a significant difference in your success. This comprehensive guide will walk you through everything you need to know about ${topic}, from the fundamentals to advanced strategies that deliver real results.\n\n## Why ${topic} Matters in ${new Date().getFullYear()}\n\nThe importance of ${topic} cannot be overstated. In ${new Date().getFullYear()}, businesses that invest in ${topic} are seeing unprecedented growth and engagement. Here is why ${topic} matters more than ever:\n\n1. **Digital Transformation** - The world is going digital, and ${topic} is at the forefront of this revolution\n2. **Consumer Behavior** - Modern consumers expect brands to have a strong ${topic} presence\n3. **Competitive Advantage** - Businesses that master ${topic} gain a significant edge over their competitors\n4. **Measurable Results** - ${topic} provides clear, data-driven insights that help optimize strategies\n\nAccording to recent studies, companies that invest in ${topic} see an average of 40% increase in revenue within the first year. This statistic alone demonstrates the transformative power of ${topic}.\n\n## Key Benefits of ${topic}\n\nUnderstanding the benefits of ${topic} is crucial for any business looking to implement it effectively. Here are the top benefits:\n\n### 1. Increased Visibility and Reach\n\n${topic} helps businesses reach a wider audience than traditional methods. With the right ${topic} strategy, you can connect with potential customers across multiple channels and touchpoints.\n\n### 2. Cost-Effective Marketing\n\nCompared to traditional marketing methods, ${topic} offers a much higher return on investment. You can reach thousands of potential customers without breaking the bank.\n\n### 3. Better Targeting and Personalization\n\n${topic} allows you to target specific demographics, interests, and behaviors. This means your message reaches the right people at the right time, increasing the likelihood of conversion.\n\n### 4. Real-Time Analytics and Optimization\n\nOne of the biggest advantages of ${topic} is the ability to track and measure results in real-time. This data-driven approach allows you to optimize your strategies continuously.\n\n### 5. Building Trust and Credibility\n\nA strong ${topic} presence helps establish your brand as an authority in your industry. When customers see consistent, valuable content, they are more likely to trust and choose your business.\n\n## How to Get Started with ${topic}\n\nGetting started with ${topic} does not have to be overwhelming. Follow this step-by-step guide:\n\n### Step 1: Define Your Goals\n\nBefore diving into ${topic}, define clear, measurable goals. What do you want to achieve? Common goals include:\n\n- Increasing brand awareness\n- Generating more leads\n- Boosting sales and conversions\n- Improving customer retention\n- Building a community\n\n### Step 2: Know Your Audience\n\nUnderstanding your target audience is the foundation of successful ${topic}. Create detailed buyer personas that include demographics, psychographics, pain points, and online behavior.\n\n### Step 3: Conduct Competitor Analysis\n\nAnalyze what your competitors are doing. Identify their strengths and weaknesses, and find opportunities to differentiate your brand.\n\n### Step 4: Choose Your Channels\n\nNot all channels are created equal. Choose the ones that align with your audience and goals:\n\n- **Social Media** - Instagram, LinkedIn, Twitter, TikTok\n- **Content Marketing** - Blog, video, podcast\n- **Email Marketing** - Newsletters, automated sequences\n- **SEO** - Organic search visibility\n- **Paid Advertising** - Google Ads, social ads\n\n### Step 5: Create a Content Strategy\n\nContent is the backbone of ${topic}. Develop a content calendar that includes blog posts, social media posts, video content, and email campaigns.\n\n### Step 6: Execute and Monitor\n\nLaunch your campaigns and monitor performance closely. Use analytics tools to track key metrics and make data-driven adjustments.\n\n## Advanced ${topic} Strategies\n\nOnce you have mastered the basics, it is time to level up with these advanced strategies:\n\n### Marketing Automation\n\nAutomation tools can help you streamline your efforts. From email sequences to social media scheduling, automation saves time and ensures consistency.\n\n### A/B Testing\n\nTest different variations of your campaigns to find what resonates best with your audience. Small tweaks can lead to significant improvements.\n\n### Data-Driven Decision Making\n\nUse analytics and data to inform your strategies. Track key performance indicators and adjust your approach based on what the data tells you.\n\n### Personalization at Scale\n\nModern tools allow you to personalize your message for different audience segments. Personalized content generates 6x more engagement than generic content.\n\n### Influencer Partnerships\n\nCollaborate with influencers in your industry to amplify your reach. Choose influencers whose audience aligns with your target market.\n\n## Common ${topic} Mistakes to Avoid\n\nEven experienced professionals make mistakes. Here are the most common pitfalls:\n\n1. **Not Having a Clear Strategy** - Without a plan, efforts will be scattered and ineffective\n2. **Ignoring Analytics** - Data is your friend; use it to optimize your strategies\n3. **Being Inconsistent** - Consistency is key; maintain a regular schedule\n4. **Trying to Be Everywhere** - Focus on the channels that matter most\n5. **Ignoring Your Audience** - Listen to your audience and create content that addresses their needs\n6. **Not Budgeting Properly** - Allocate sufficient resources to your efforts\n7. **Expecting Overnight Results** - This is a long-term investment; be patient and persistent\n\n## ${topic} Tools and Resources\n\nHaving the right tools can make your efforts more efficient:\n\n- **Analytics** - Google Analytics, Mixpanel, Hotjar\n- **Social Media** - Hootsuite, Buffer, Sprout Social\n- **Content Creation** - Canva, Adobe Creative Suite, Figma\n- **Email Marketing** - Mailchimp, ConvertKit, ActiveCampaign\n- **SEO** - SEMrush, Ahrefs, Moz\n- **Automation** - Zapier, HubSpot, Marketo\n\n## ${topic} Case Studies\n\nReal-world examples demonstrate the power of ${topic}:\n\n**Case Study 1: Small Business Growth**\nA local bakery implemented ${topic} strategies and saw a 300% increase in online orders within 3 months. They focused on social media marketing and local SEO.\n\n**Case Study 2: B2B Lead Generation**\nA SaaS company used ${topic} to generate 500+ qualified leads per month. Their content marketing strategy included blog posts, webinars, and email campaigns.\n\n**Case Study 3: E-commerce Success**\nAn online store leveraged ${topic} to increase conversions by 150%. They combined SEO, paid advertising, and influencer partnerships.\n\n## The Future of ${topic}\n\nLooking ahead, ${topic} will continue to evolve. Here are the trends to watch:\n\n1. **AI and Machine Learning** - AI-powered tools will automate and optimize ${topic} strategies\n2. **Voice Search** - Optimizing for voice search will become increasingly important\n3. **Video Content** - Video will dominate ${topic} channels\n4. **Privacy and Data** - First-party data will become more valuable as third-party cookies phase out\n5. **Sustainability** - Consumers will expect brands to demonstrate social responsibility\n\n## Conclusion\n\n${topic} is a powerful strategy that can transform your business when done right. By following the steps and strategies outlined in this guide, you are well on your way to success.\n\nRemember to stay consistent, measure your results, and continuously optimize your approach. The key to mastering ${topic} is to start with a solid foundation, execute consistently, and learn from your results.\n\nStart implementing these ${topic} strategies today and watch your business grow!`,
+        faqs: [
+          { question: `What is ${topic}?`, answer: `${topic} is a comprehensive strategy that helps businesses improve their reach, engagement, and overall performance in the digital landscape.` },
+          { question: `Why is ${topic} important for businesses?`, answer: `${topic} helps businesses connect with their target audience, build brand awareness, and drive measurable results that contribute to growth.` },
+          { question: `How long does it take to see results from ${topic}?`, answer: `Most businesses start seeing initial results within 2-3 months, with significant improvements typically occurring within 6 months of consistent effort.` },
+          { question: `What are the best tools for ${topic}?`, answer: `Popular tools include analytics platforms, automation software, content management systems, and specialized ${topic} tools that help streamline your workflow.` },
+          { question: `How much budget should I allocate for ${topic}?`, answer: `Budget varies by business size and goals, but a good starting point is 10-20% of your marketing budget, adjusting based on results.` },
+          { question: `Can I do ${topic} myself or do I need an agency?`, answer: `You can start ${topic} yourself with the right tools and knowledge. As you scale, consider hiring specialists or an agency for expert support.` },
+          { question: `What are the biggest ${topic} trends this year?`, answer: `Key trends include AI-powered automation, video-first content, personalized experiences, voice search optimization, and data-driven decision making.` },
+        ],
+        featuredImage: {
+          url: `https://source.unsplash.com/1200x630/?${encodeURIComponent(topicSlug)}`,
+          alt: `${topic} - Featured Image`,
+          aiPrompt: `Professional hero image for article about ${topic}. High quality, modern design, vibrant colors, professional photography, 8K resolution, natural lighting, clean composition, suitable for blog header.`,
+        },
+        sectionImages: sections.map((heading, i) => ({
+          heading,
+          url: `https://source.unsplash.com/800x450/?${encodeURIComponent(topicSlug)}`,
+          alt: `${heading} - ${topic}`,
+          aiPrompt: `Professional photograph for blog section "${heading}" about ${topic}. Modern, clean composition with vibrant colors. 8K resolution, professional photography, natural lighting.`,
+        })),
       }
     }
     case 'seo-title':
