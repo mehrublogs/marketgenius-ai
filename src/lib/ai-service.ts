@@ -503,3 +503,119 @@ function demoFallback(type: string, inputs: Record<string, unknown>) {
       return { message: 'Demo output' }
   }
 }
+
+// --- Smart AI Detection ---
+
+interface SmartDetectionResult {
+  detectedTopic: string
+  detectedIntent: string
+  confidence: number
+  results: Record<string, unknown>
+}
+
+export async function smartDetect(prompt: string): Promise<SmartDetectionResult> {
+  const system = `You are an AI intent detector. Analyze the user's prompt and determine:
+1. The main topic (extract the core subject)
+2. The intent (what they want): article, seo, social-media, hashtags, image-prompt, keywords, product-description, general-chat
+3. Confidence score (0-100)
+
+Return ONLY valid JSON with these fields:
+- topic (string): The main topic/subject
+- intent (string): One of: article, seo, social-media, hashtags, image-prompt, keywords, product-description, general-chat
+- confidence (number): 0-100
+
+Examples:
+- "Write an article about digital marketing" → { topic: "digital marketing", intent: "article", confidence: 95 }
+- "Give me hashtags for fitness" → { topic: "fitness", intent: "hashtags", confidence: 90 }
+- "SEO tips for my blog" → { topic: "blog SEO", intent: "seo", confidence: 85 }
+- "Create social posts about AI" → { topic: "AI", intent: "social-media", confidence: 90 }
+- "Generate image of a sunset" → { topic: "sunset", intent: "image-prompt", confidence: 85 }
+- "What is machine learning?" → { topic: "machine learning", intent: "general-chat", confidence: 80 }`
+
+  const raw = await callAI(prompt, system)
+  try {
+    const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+    return JSON.parse(cleaned)
+  } catch {
+    const lowerPrompt = prompt.toLowerCase()
+    let intent = 'general-chat'
+    let confidence = 60
+    if (lowerPrompt.includes('article') || lowerPrompt.includes('write') || lowerPrompt.includes('blog')) { intent = 'article'; confidence = 80 }
+    else if (lowerPrompt.includes('seo') || lowerPrompt.includes('meta') || lowerPrompt.includes('keyword')) { intent = 'seo'; confidence = 75 }
+    else if (lowerPrompt.includes('social') || lowerPrompt.includes('post') || lowerPrompt.includes('tweet')) { intent = 'social-media'; confidence = 75 }
+    else if (lowerPrompt.includes('hashtag') || lowerPrompt.includes('tag')) { intent = 'hashtags'; confidence = 80 }
+    else if (lowerPrompt.includes('image') || lowerPrompt.includes('photo') || lowerPrompt.includes('picture')) { intent = 'image-prompt'; confidence = 75 }
+    else if (lowerPrompt.includes('product') || lowerPrompt.includes('description')) { intent = 'product-description'; confidence = 70 }
+    const words = prompt.replace(/[^\w\s]/g, '').split(/\s+/).filter(w => w.length > 3).slice(0, 3).join(' ')
+    return { topic: words || prompt, intent, confidence }
+  }
+}
+
+export async function generateSmartResponse(prompt: string): Promise<{ type: string; output: unknown }> {
+  const detection = await smartDetect(prompt)
+
+  switch (detection.detectedIntent) {
+    case 'article':
+      return { type: 'article-writer', output: await generateArticle({ topic: detection.detectedTopic, language: 'English', tone: 'Professional', targetAudience: 'General audience', wordCount: '2000' }) }
+    case 'seo':
+      return { type: 'seo', output: { titles: await generateSEOTitle(detection.detectedTopic).then(r => r.titles), descriptions: await generateSEOMeta(detection.detectedTopic, prompt).then(r => r.descriptions), checklist: await generateSEOChecklist(detection.detectedTopic).then(r => r.checklist) } }
+    case 'social-media':
+      return { type: 'social-posts', output: await generateSocialPosts({ platform: 'Instagram', topic: detection.detectedTopic, tone: 'Professional', language: 'English', cta: 'Learn more' }) }
+    case 'hashtags':
+      return { type: 'hashtag-generator', output: await generateHashtags({ topic: detection.detectedTopic, niche: 'general', platform: 'Instagram', language: 'English' }) }
+    case 'image-prompt':
+      return { type: 'image-prompt', output: await generateImagePrompt({ subject: detection.detectedTopic, style: 'Professional', mood: 'Inspiring', platform: 'Web', aspectRatio: '16:9' }) }
+    case 'keywords':
+      return { type: 'keyword-research', output: await generateKeywords({ seedKeyword: detection.detectedTopic, country: 'Global', language: 'English' }) }
+    case 'product-description':
+      return { type: 'product-description', output: await generateProductDescription({ productName: detection.detectedTopic, features: prompt, audience: 'General consumers', tone: 'Professional', language: 'English' }) }
+    default:
+      const system = 'You are a helpful AI assistant. Provide a clear, comprehensive response to the user question. Format with headings, bullet points where appropriate.'
+      const response = await callAI(prompt, system)
+      return { type: 'general-chat', output: { response: response || `I understand you're asking about "${detection.detectedTopic}". Here's what I can help you with:\n\n1. **Write an article** about this topic\n2. **Generate SEO content** (titles, meta descriptions)\n3. **Create social media posts**\n4. **Generate hashtags**\n5. **Create image prompts**\n6. **Research keywords**\n\nPlease try asking with a specific action, or use the specialized tools from the sidebar.` } }
+  }
+}
+
+// --- Image Generation (Unsplash + Pexels) ---
+
+interface GeneratedImage {
+  url: string
+  alt: string
+  width: number
+  height: number
+  photographer: string
+  source: string
+}
+
+export async function generateImages(prompt: string, count: number = 6): Promise<{ images: GeneratedImage[]; aiPrompt: string }> {
+  const keywords = prompt.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2).slice(0, 4).join(',')
+
+  const images: GeneratedImage[] = []
+
+  // Unsplash source images (free, no API key needed)
+  const unsplashSizes = [
+    { w: 800, h: 600 },
+    { w: 600, h: 800 },
+    { w: 1200, h: 630 },
+    { w: 800, h: 500 },
+    { w: 700, h: 700 },
+    { w: 900, h: 600 },
+  ]
+
+  for (let i = 0; i < Math.min(count, 6); i++) {
+    const size = unsplashSizes[i % unsplashSizes.length]
+    const seed = encodeURIComponent(`${keywords}-${i}`)
+    images.push({
+      url: `https://source.unsplash.com/${size.w}x${size.h}/?${seed}`,
+      alt: `${prompt} - Image ${i + 1}`,
+      width: size.w,
+      height: size.h,
+      photographer: 'Unsplash',
+      source: 'Unsplash',
+    })
+  }
+
+  const aiPrompt = `Professional high-quality photograph of: ${prompt}. Detailed, vivid, clear focus, natural lighting, vibrant colors, 8K resolution, suitable for commercial use, modern aesthetic.`
+
+  return { images, aiPrompt }
+}

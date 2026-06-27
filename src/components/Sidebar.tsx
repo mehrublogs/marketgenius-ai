@@ -18,7 +18,9 @@ export default function Sidebar({ user }: SidebarProps) {
 
   const mainLinks = [
     { href: '/dashboard', label: t('sidebar.dashboard'), icon: '📊' },
+    { href: '/tools/ai-chat', label: 'Smart AI', icon: '🤖' },
     { href: '/tools/article-writer', label: t('sidebar.articleWriter'), icon: '✍️' },
+    { href: '/tools/image-generator', label: 'Image Generator', icon: '🎨' },
     { href: '/tools/seo-tools', label: t('sidebar.seoTools'), icon: '🔍' },
     { href: '/tools/image-prompt', label: t('sidebar.imagePrompt'), icon: '🖼️' },
     { href: '/tools/social-posts', label: t('sidebar.socialPosts'), icon: '📱' },
